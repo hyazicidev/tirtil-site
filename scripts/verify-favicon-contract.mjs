@@ -5,10 +5,11 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { inflateSync } from "node:zlib";
 
 const repositoryRoot = fileURLToPath(new URL("..", import.meta.url));
 const expectedMetadata = {
-  icon: "/favicon-tirtil-v9.ico",
+  icon: "/favicon-tirtil-v10.png",
   mask: "/safari-pinned-tab-v9.svg",
   apple180: "/apple-touch-icon-tirtil-v9-180.png",
   apple167: "/apple-touch-icon-tirtil-v9-167.png",
@@ -16,8 +17,9 @@ const expectedMetadata = {
   manifest: "/site-tirtil-v9.webmanifest",
 };
 const expectedAssets = {
-  ico: expectedMetadata.icon,
-  png: "/favicon-tirtil-v9-32.png",
+  png: expectedMetadata.icon,
+  preview: "/favicon-tirtil-v10-32.png",
+  ico: "/favicon-tirtil-v10.ico",
   mask: expectedMetadata.mask,
   apple180: expectedMetadata.apple180,
   apple167: expectedMetadata.apple167,
@@ -29,8 +31,10 @@ const expectedAssets = {
   manifest: expectedMetadata.manifest,
 };
 const expectedAssetHashes = {
-  ico: "cc5e31041ba3f03793d9f44a7dac640093ec24d95a45d32269c028f4b85c00bd",
-  png: "3a2ecfef9842699f053640106cd0135770cadcf9871c68328a7df1916ff17639",
+  png: "70e7ca5ffb38a0038584f0446832447005ad001f9a0942b4e941fbe78c467e43",
+  preview:
+    "64c552b6cb25815a54d51eb953cf4c2ac57918b86d0be2d0e7c999442b8a59fd",
+  ico: "8c6b0d77cb937d7a4c0c4a5faa6571cf7acd14e7f9c97e1748b632dc95bb3a19",
   mask: "5400864307adffc06cca9992ce969d045ab54536ad91d0c3650d5a5e49f4cdaf",
   apple180:
     "1a2a1b22611366fe99dd780fee0f0e37d567a2759e605bbbafc319bd67ff09ff",
@@ -94,6 +98,7 @@ const legacyPatterns = [
   "favicon-tirtil-v6",
   "favicon-tirtil-v7",
   "favicon-tirtil-v8",
+  "favicon-tirtil-v9.ico",
   "apple-touch-icon-tirtil-v7",
   "safari-pinned-tab-v7",
   "_next/static/media/favicon",
@@ -101,8 +106,8 @@ const legacyPatterns = [
 
 const metadataRecords = {
   icon: [
-    `<link rel="icon" href="${expectedMetadata.icon}" sizes="16x16 32x32 48x48" type="image/vnd.microsoft.icon">`,
-    `"rel":"icon","href":"${expectedMetadata.icon}","sizes":"16x16 32x32 48x48","type":"image/vnd.microsoft.icon"`,
+    `<link rel="icon" href="${expectedMetadata.icon}" sizes="256x256" type="image/png">`,
+    `"rel":"icon","href":"${expectedMetadata.icon}","sizes":"256x256","type":"image/png"`,
   ],
   mask: [
     `<link rel="mask-icon" href="${expectedMetadata.mask}" color="#A8D84F">`,
@@ -382,6 +387,7 @@ function validatePngIhdr(
   kind,
   expectedWidth,
   expectedHeight,
+  expectedBitDepth,
   allowedColorTypes,
 ) {
   const assetPath = assetPaths[kind];
@@ -406,7 +412,7 @@ function validatePngIhdr(
   if (
     actual.width !== expectedWidth ||
     actual.height !== expectedHeight ||
-    actual.bitDepth !== 8 ||
+    actual.bitDepth !== expectedBitDepth ||
     !allowedColorTypes.includes(actual.colorType)
   ) {
     fail("PNG dimensions, bit depth, or color type are invalid", {
@@ -414,7 +420,7 @@ function validatePngIhdr(
       expected: {
         width: expectedWidth,
         height: expectedHeight,
-        bitDepth: 8,
+        bitDepth: expectedBitDepth,
         allowedColorTypes,
       },
       actual,
@@ -422,14 +428,166 @@ function validatePngIhdr(
   }
 }
 
-validatePngIhdr("png", 32, 32, [2, 6]);
-validatePngIhdr("apple180", 180, 180, [2]);
-validatePngIhdr("apple167", 167, 167, [2]);
-validatePngIhdr("apple152", 152, 152, [2]);
-validatePngIhdr("pwaAny192", 192, 192, [2]);
-validatePngIhdr("pwaAny512", 512, 512, [2]);
-validatePngIhdr("pwaMaskable192", 192, 192, [2]);
-validatePngIhdr("pwaMaskable512", 512, 512, [2]);
+validatePngIhdr("png", 256, 256, 16, [6]);
+validatePngIhdr("preview", 32, 32, 8, [6]);
+validatePngIhdr("apple180", 180, 180, 8, [2]);
+validatePngIhdr("apple167", 167, 167, 8, [2]);
+validatePngIhdr("apple152", 152, 152, 8, [2]);
+validatePngIhdr("pwaAny192", 192, 192, 8, [2]);
+validatePngIhdr("pwaAny512", 512, 512, 8, [2]);
+validatePngIhdr("pwaMaskable192", 192, 192, 8, [2]);
+validatePngIhdr("pwaMaskable512", 512, 512, 8, [2]);
+
+function paethPredictor(left, above, upperLeft) {
+  const estimate = left + above - upperLeft;
+  const leftDistance = Math.abs(estimate - left);
+  const aboveDistance = Math.abs(estimate - above);
+  const upperLeftDistance = Math.abs(estimate - upperLeft);
+  if (leftDistance <= aboveDistance && leftDistance <= upperLeftDistance) {
+    return left;
+  }
+  return aboveDistance <= upperLeftDistance ? above : upperLeft;
+}
+
+function validateMarkOnlyAlpha(kind) {
+  const assetPath = assetPaths[kind];
+  if (!assetPath || !fs.existsSync(assetPath)) return;
+  const png = fs.readFileSync(assetPath);
+  if (png.length < 33) {
+    fail("Mark-only browser favicon is not a complete PNG", { kind });
+    return;
+  }
+  const width = png.readUInt32BE(16);
+  const height = png.readUInt32BE(20);
+  const bitDepth = png.readUInt8(24);
+  const colorType = png.readUInt8(25);
+  const interlaceMethod = png.readUInt8(28);
+  if (colorType !== 6 || ![8, 16].includes(bitDepth)) {
+    fail("Mark-only browser favicon must have an RGBA color type", {
+      kind,
+      bitDepth,
+      colorType,
+    });
+    return;
+  }
+  if (interlaceMethod !== 0) {
+    fail("Mark-only alpha validation requires a non-interlaced PNG", {
+      kind,
+      interlaceMethod,
+    });
+    return;
+  }
+
+  const idatChunks = [];
+  for (let offset = 8; offset + 12 <= png.length; ) {
+    const byteLength = png.readUInt32BE(offset);
+    const nextOffset = offset + 12 + byteLength;
+    if (nextOffset > png.length) {
+      fail("Mark-only browser favicon has a truncated PNG chunk", { kind });
+      return;
+    }
+    const type = png.toString("ascii", offset + 4, offset + 8);
+    if (type === "IDAT") {
+      idatChunks.push(png.subarray(offset + 8, offset + 8 + byteLength));
+    }
+    offset = nextOffset;
+    if (type === "IEND") break;
+  }
+  if (idatChunks.length === 0) {
+    fail("Mark-only browser favicon has no IDAT data", { kind });
+    return;
+  }
+
+  let filtered;
+  try {
+    filtered = inflateSync(Buffer.concat(idatChunks));
+  } catch (error) {
+    fail("Mark-only browser favicon IDAT data cannot be decoded", {
+      kind,
+      error: error.message,
+    });
+    return;
+  }
+
+  const bytesPerSample = bitDepth / 8;
+  const bytesPerPixel = 4 * bytesPerSample;
+  const rowByteLength = width * bytesPerPixel;
+  if (filtered.length !== (rowByteLength + 1) * height) {
+    fail("Mark-only browser favicon has an invalid decoded byte length", {
+      kind,
+      expected: (rowByteLength + 1) * height,
+      actual: filtered.length,
+    });
+    return;
+  }
+
+  let previousRow = Buffer.alloc(rowByteLength);
+  let transparentPixels = 0;
+  let opaquePixels = 0;
+  let visiblePixels = 0;
+  const maximumAlpha = bitDepth === 16 ? 65535 : 255;
+  for (let row = 0; row < height; row += 1) {
+    const filteredOffset = row * (rowByteLength + 1);
+    const filterType = filtered.readUInt8(filteredOffset);
+    if (filterType > 4) {
+      fail("Mark-only browser favicon uses an invalid PNG filter", {
+        kind,
+        row,
+        filterType,
+      });
+      return;
+    }
+    const currentRow = Buffer.from(
+      filtered.subarray(
+        filteredOffset + 1,
+        filteredOffset + 1 + rowByteLength,
+      ),
+    );
+    for (let column = 0; column < rowByteLength; column += 1) {
+      const left =
+        column >= bytesPerPixel ? currentRow[column - bytesPerPixel] : 0;
+      const above = previousRow[column];
+      const upperLeft =
+        column >= bytesPerPixel ? previousRow[column - bytesPerPixel] : 0;
+      let predictor = 0;
+      if (filterType === 1) predictor = left;
+      if (filterType === 2) predictor = above;
+      if (filterType === 3) predictor = Math.floor((left + above) / 2);
+      if (filterType === 4) {
+        predictor = paethPredictor(left, above, upperLeft);
+      }
+      currentRow[column] = (currentRow[column] + predictor) & 0xff;
+    }
+    for (let pixel = 0; pixel < width; pixel += 1) {
+      const alphaOffset = pixel * bytesPerPixel + 3 * bytesPerSample;
+      const alpha =
+        bitDepth === 16
+          ? currentRow.readUInt16BE(alphaOffset)
+          : currentRow.readUInt8(alphaOffset);
+      if (alpha === 0) transparentPixels += 1;
+      if (alpha === maximumAlpha) opaquePixels += 1;
+      if (alpha > 0) visiblePixels += 1;
+    }
+    previousRow = currentRow;
+  }
+
+  const totalPixels = width * height;
+  if (
+    transparentPixels <= totalPixels / 2 ||
+    opaquePixels === 0 ||
+    visiblePixels === 0
+  ) {
+    fail("Browser favicon must remain visible mark-only RGBA artwork", {
+      kind,
+      totalPixels,
+      transparentPixels,
+      opaquePixels,
+      visiblePixels,
+    });
+  }
+}
+
+validateMarkOnlyAlpha("png");
 
 if (fs.existsSync(assetPaths.ico)) {
   const ico = fs.readFileSync(assetPaths.ico);
