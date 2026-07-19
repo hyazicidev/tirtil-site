@@ -25,6 +25,53 @@ const textAssets = walk(root).filter((file) =>
   [".html", ".js", ".json", ".txt", ".webmanifest"].includes(path.extname(file)),
 );
 const htmlAssets = textAssets.filter((file) => file.endsWith(".html"));
+const footerRscClass =
+  '"className":"inline-flex items-center gap-1.5 text-sm font-bold text-white/70 transition hover:text-lime"';
+let serializedFooterCount = 0;
+
+for (const file of textAssets.filter(
+  (asset) => asset.endsWith(".html") || asset.endsWith(".txt"),
+)) {
+  const normalized = fs
+    .readFileSync(file, "utf8")
+    .replaceAll('\\"', '"');
+  for (const accidentalMailto of [
+    '"href":"mailto:info%40tirtil.ai","onClick":"$undefined"',
+    '"href":"mailto:info%40tirtil.ai","className":"font-bold text-leaf-deep hover:underline"',
+  ]) {
+    if (normalized.includes(accidentalMailto)) {
+      fail(
+        `${path.relative(root, file)} contains a footer mailto outside the footer`,
+      );
+    }
+  }
+  let cursor = 0;
+  while (true) {
+    const markerIndex = normalized.indexOf(footerRscClass, cursor);
+    if (markerIndex < 0) break;
+    serializedFooterCount += 1;
+    const before = normalized.slice(Math.max(0, markerIndex - 100), markerIndex);
+    const after = normalized.slice(
+      markerIndex,
+      markerIndex + 1_500,
+    );
+    if (!before.includes('"href":"mailto:info%40tirtil.ai"')) {
+      fail(`${path.relative(root, file)} RSC footer has the wrong email target`);
+    }
+    if (
+      !after.includes(
+        '["$","span",null,{"children":"info@tirtil.ai"}]',
+      )
+    ) {
+      fail(`${path.relative(root, file)} RSC footer splits the email address`);
+    }
+    cursor = markerIndex + footerRscClass.length;
+  }
+}
+
+if (serializedFooterCount !== 28) {
+  fail(`Expected 28 serialized footers, found ${serializedFooterCount}`);
+}
 
 const pagesWithNavbar = htmlAssets.filter((file) => {
   const html = fs.readFileSync(file, "utf8");
@@ -42,14 +89,20 @@ for (const file of pagesWithNavbar) {
     fail(`Navbar CTA still rendered in ${path.relative(root, file)}`);
   }
   const footer = html.match(/<footer[\s\S]*?<\/footer>/)?.[0] ?? "";
-  for (const emailPart of [
-    "<span>info</span>",
-    "<span>@</span>",
-    "<span>tirtil.ai</span>",
-  ]) {
-    if (!footer.includes(emailPart)) {
-      fail(`${path.relative(root, file)} footer is missing ${emailPart}`);
-    }
+  const emailLink =
+    footer.match(
+      /<a href="mailto:info%40tirtil\.ai"[^>]*>[\s\S]*?<\/a>/,
+    )?.[0] ?? "";
+  if (!emailLink.includes("info&#64;tirtil.ai")) {
+    fail(
+      `${path.relative(root, file)} footer is missing the continuous email address`,
+    );
+  }
+  if (/<span>info<\/span>|<span>@<\/span>|<span>tirtil\.ai<\/span>/.test(emailLink)) {
+    fail(`${path.relative(root, file)} footer still splits the email address`);
+  }
+  if (footer.includes("<!--email_off-->") || footer.includes("<!--/email_off-->")) {
+    fail(`${path.relative(root, file)} footer contains hydration-unsafe comments`);
   }
 }
 
