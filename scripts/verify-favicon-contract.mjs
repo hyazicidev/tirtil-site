@@ -8,19 +8,22 @@ import { fileURLToPath } from "node:url";
 
 const repositoryRoot = fileURLToPath(new URL("..", import.meta.url));
 const expectedMetadata = {
-  icon: "/favicon-tirtil-v7-32.png",
+  icon: "/favicon-tirtil-v8.ico",
   mask: "/safari-pinned-tab-v7.svg",
   apple: "/apple-touch-icon-tirtil-v7.png",
 };
 const expectedAssets = {
-  ico: "/favicon-tirtil-v7.ico",
-  png: expectedMetadata.icon,
+  ico: expectedMetadata.icon,
+  png: "/favicon-tirtil-v8-32.png",
+  source: "/favicon-tirtil-v8.svg",
   mask: expectedMetadata.mask,
   apple: expectedMetadata.apple,
 };
 const expectedAssetHashes = {
-  ico: "cc5e31041ba3f03793d9f44a7dac640093ec24d95a45d32269c028f4b85c00bd",
-  png: "3a2ecfef9842699f053640106cd0135770cadcf9871c68328a7df1916ff17639",
+  ico: "37339e08e6c96867be702de12f79443ac1d4d140234c2d90c684fc685b7be3a2",
+  png: "b3d54f0c6ae4752c65557764b609886855ca2b3623b47129f6e361150081795a",
+  source:
+    "159b9f45811a9e45995c560a8b80be5f130569ba43c7c8f2bc26ee35c844e0cc",
   mask: "5400864307adffc06cca9992ce969d045ab54536ad91d0c3650d5a5e49f4cdaf",
   apple: "76998cd86305a437d031bba6c41dd9b60c050a2854ce85a1a84c5d8ea900eabf",
 };
@@ -49,6 +52,7 @@ const legacyPatterns = [
   "favicon-tirtil-6392dd24.ico",
   "favicon-mark-v5",
   "favicon-tirtil-v6",
+  "favicon-tirtil-v7",
   "_next/static/media/favicon",
 ];
 
@@ -112,6 +116,19 @@ for (const file of [...htmlFiles, ...payloadFiles]) {
     fail("Normal-tab favicon must have exactly one unambiguous source", {
       file,
       iconHrefs,
+    });
+  }
+  const hasExpectedIconRecord =
+    normalized.includes(
+      `<link rel="icon" href="${expectedMetadata.icon}" sizes="16x16 32x32 48x48" type="image/x-icon">`,
+    ) ||
+    normalized.includes(
+      `"rel":"icon","href":"${expectedMetadata.icon}","sizes":"16x16 32x32 48x48","type":"image/x-icon"`,
+    );
+  if (!hasExpectedIconRecord) {
+    fail("Normal-tab favicon metadata has invalid type or sizes", {
+      file,
+      expectedIcon: expectedMetadata.icon,
     });
   }
 
@@ -225,7 +242,7 @@ if (fs.existsSync(assetPaths.ico)) {
   }
 }
 
-for (const kind of ["mask"]) {
+for (const kind of ["source", "mask"]) {
   const assetPath = assetPaths[kind];
   if (!fs.existsSync(assetPath)) continue;
   const svg = fs.readFileSync(assetPath, "utf8");
