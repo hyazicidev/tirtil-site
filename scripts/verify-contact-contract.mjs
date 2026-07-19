@@ -101,8 +101,20 @@ for (const file of pagesWithNavbar) {
   if (/<span>info<\/span>|<span>@<\/span>|<span>tirtil\.ai<\/span>/.test(emailLink)) {
     fail(`${path.relative(root, file)} footer still splits the email address`);
   }
-  if (footer.includes("<!--email_off-->") || footer.includes("<!--/email_off-->")) {
-    fail(`${path.relative(root, file)} footer contains hydration-unsafe comments`);
+  const cloudflareExemption =
+    `<!--email_off-->${emailLink}<!--/email_off-->`;
+  if (!footer.includes(cloudflareExemption)) {
+    fail(
+      `${path.relative(root, file)} footer is missing its Cloudflare email exemption`,
+    );
+  }
+  if (
+    (footer.match(/<!--email_off-->/g) ?? []).length !== 1 ||
+    (footer.match(/<!--\/email_off-->/g) ?? []).length !== 1
+  ) {
+    fail(
+      `${path.relative(root, file)} footer must contain exactly one Cloudflare email exemption`,
+    );
   }
 }
 

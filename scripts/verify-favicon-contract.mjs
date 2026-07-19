@@ -325,6 +325,10 @@ for (const file of htmlFiles) {
     );
     const continuousEmailNodes =
       footer.match(continuousEmailTextPattern) ?? [];
+    const cloudflareExemption =
+      mailtoAnchors.length === 1
+        ? `<!--email_off-->${mailtoAnchors[0].source}<!--/email_off-->`
+        : "";
 
     if (mailtoAnchors.length !== 1) {
       fail(
@@ -345,6 +349,18 @@ for (const file of htmlFiles) {
         "FOOTER_EMAIL_TEXT_NODE",
         "Footer email must be one continuous visible text node inside the mailto link",
         { file, count: continuousEmailNodes.length },
+      );
+    }
+    if (
+      !cloudflareExemption ||
+      !footer.includes(cloudflareExemption) ||
+      (footer.match(/<!--email_off-->/g) ?? []).length !== 1 ||
+      (footer.match(/<!--\/email_off-->/g) ?? []).length !== 1
+    ) {
+      fail(
+        "FOOTER_CLOUDFLARE_EXEMPTION",
+        "Footer mailto must be wrapped by exactly one Cloudflare email_off exemption",
+        { file },
       );
     }
   }
