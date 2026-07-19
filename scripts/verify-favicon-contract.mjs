@@ -63,6 +63,9 @@ const expectedIconPaths = new Set([
   expectedMetadata.apple152,
 ]);
 const expectedMetadataOccurrences = 47;
+const faviconRefreshShimMarker = "<script data-tirtil-favicon-refresh>";
+const faviconRefreshStorageKey = "__tirtil_fv";
+const faviconRefreshMarkerValue = "10";
 const metadataOccurrenceCounts = {
   icon: 0,
   mask: 0,
@@ -74,6 +77,7 @@ const metadataOccurrenceCounts = {
   applicationName: 0,
   appleTitle: 0,
 };
+let faviconRefreshShimFiles = 0;
 const failures = [];
 
 function fail(message, details = undefined) {
@@ -152,6 +156,106 @@ function countMetadataRecord(source, kind) {
     (total, record) => total + countLiteral(source, record),
     0,
   );
+}
+
+function validateFaviconRefreshShim(file, source) {
+  const markerCount = countLiteral(source, faviconRefreshShimMarker);
+  if (markerCount !== 1) {
+    fail("Safari favicon refresh shim missing or duplicated", {
+      file,
+      marker: faviconRefreshShimMarker,
+      expected: 1,
+      actual: markerCount,
+    });
+    return;
+  }
+  faviconRefreshShimFiles += 1;
+
+  const shimStart = source.indexOf(faviconRefreshShimMarker);
+  const shimEnd = source.indexOf("</script>", shimStart);
+  if (shimEnd < 0) {
+    fail("Safari favicon refresh shim is not closed", { file });
+    return;
+  }
+  const shim = source.slice(
+    shimStart,
+    shimEnd + "</script>".length,
+  );
+
+  const directIconRecord = metadataRecords.icon[0];
+  const directIconCount = countLiteral(source, directIconRecord);
+  const directIconStart = source.indexOf(directIconRecord);
+  const directIconEnd = directIconStart + directIconRecord.length;
+  if (
+    directIconCount !== 1 ||
+    directIconStart < 0 ||
+    shimStart < directIconEnd ||
+    !/^\s*$/.test(source.slice(directIconEnd, shimStart))
+  ) {
+    fail(
+      "Safari favicon refresh shim must immediately follow the sole direct icon",
+      {
+        file,
+        directIconCount,
+      },
+    );
+  }
+
+  const directMaskStart = source.indexOf(metadataRecords.mask[0]);
+  const externalScriptStarts = [
+    ...source.matchAll(/<script\b(?=[^>]*\bsrc=)[^>]*>/gi),
+  ].map((match) => match.index);
+  if (
+    directMaskStart < 0 ||
+    shimStart >= directMaskStart ||
+    externalScriptStarts.some((scriptStart) => scriptStart < shimStart)
+  ) {
+    fail(
+      "Safari favicon refresh shim must precede mask-icon and external scripts",
+      {
+        file,
+        shimStart,
+        directMaskStart,
+        firstExternalScriptStart: externalScriptStarts[0] ?? null,
+      },
+    );
+  }
+
+  const semanticChecks = {
+    storageKey: shim.includes(faviconRefreshStorageKey),
+    markerValue: new RegExp(
+      `["']${faviconRefreshMarkerValue}["']`,
+    ).test(shim),
+    safariUserAgent:
+      shim.includes("navigator.vendor") &&
+      shim.includes("navigator.userAgent") &&
+      shim.includes("Version/") &&
+      shim.includes("Safari/"),
+    locationReplace: shim.includes("location.replace"),
+    delayedHistoryCleanup:
+      /setTimeout\s*\([\s\S]*history\.replaceState/.test(shim),
+    queryMarkerDelete: /\.searchParams\.delete\s*\(/.test(shim),
+    pathnameStorageGuard:
+      shim.includes("tirtil:favicon:v10:") &&
+      shim.includes("url.pathname"),
+    storageReadWrite:
+      /\blocalStorage\.getItem\s*\(/.test(shim) &&
+      /\blocalStorage\.setItem\s*\(/.test(shim),
+    guardedStorage:
+      /\btry\s*\{[\s\S]*\blocalStorage\b[\s\S]*\}\s*catch(?:\s*\([^)]*\))?\s*\{/.test(
+        shim,
+      ),
+  };
+  const missingSemantics = Object.entries(semanticChecks)
+    .filter(([, valid]) => !valid)
+    .map(([kind]) => kind);
+  if (missingSemantics.length > 0) {
+    fail("Safari favicon refresh shim semantics are incomplete", {
+      file,
+      markerValue: faviconRefreshMarkerValue,
+      missingSemantics,
+    });
+  }
 }
 
 for (const file of [...htmlFiles, ...payloadFiles]) {
@@ -295,6 +399,7 @@ for (const file of [...htmlFiles, ...payloadFiles]) {
   }
 
   if (file.endsWith(".html")) {
+    validateFaviconRefreshShim(file, source);
     const firstPositions = Object.fromEntries(
       Object.entries(expectedMetadata).map(([kind, href]) => [
         kind,
@@ -327,6 +432,12 @@ if (htmlFiles.length !== 13) {
   fail("Unexpected HTML artifact count", {
     expected: 13,
     actual: htmlFiles.length,
+  });
+}
+if (faviconRefreshShimFiles !== htmlFiles.length) {
+  fail("Unexpected Safari favicon refresh shim coverage", {
+    expected: htmlFiles.length,
+    actual: faviconRefreshShimFiles,
   });
 }
 if (metadataFiles.length !== 37) {
@@ -771,6 +882,7 @@ console.log(
     {
       htmlFiles: htmlFiles.length,
       metadataFiles: metadataFiles.length,
+      faviconRefreshShimFiles,
       metadataOccurrenceCounts,
       expectedMetadata,
       expectedAssets,
