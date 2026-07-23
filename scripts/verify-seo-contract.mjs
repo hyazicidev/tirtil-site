@@ -7,6 +7,13 @@ import { fileURLToPath } from "node:url";
 const root = fileURLToPath(new URL("..", import.meta.url));
 const expectedLastmod = "2026-07-23";
 const failures = [];
+const notFoundRootClass =
+  "flex min-h-screen flex-col items-center justify-center bg-surface px-6 py-16 text-center";
+const nativeNotFoundFiles = [
+  "404.html",
+  "404/index.html",
+  "_not-found/index.html",
+];
 
 const pages = [
   {
@@ -54,6 +61,26 @@ const pages = [
 
 function read(relativePath) {
   return fs.readFileSync(path.join(root, relativePath), "utf8");
+}
+
+function collectNotFoundArtifacts(directory = root) {
+  const files = [];
+
+  for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+    if (entry.name === ".git" || entry.name === "node_modules") continue;
+    const absolutePath = path.join(directory, entry.name);
+    if (entry.isDirectory()) {
+      files.push(...collectNotFoundArtifacts(absolutePath));
+      continue;
+    }
+    if (!/\.(?:html|txt)$/.test(entry.name)) continue;
+    const source = fs.readFileSync(absolutePath, "utf8");
+    if (source.includes("Bu yaprak burada değil")) {
+      files.push(path.relative(root, absolutePath));
+    }
+  }
+
+  return files;
 }
 
 function matchAll(source, pattern) {
@@ -164,10 +191,47 @@ for (const page of pages) {
   }
 }
 
-for (const file of ["404.html", "404/index.html", "_not-found/index.html"]) {
-  if (!/<meta name="robots" content="noindex"/i.test(read(file))) {
+for (const file of nativeNotFoundFiles) {
+  const html = read(file);
+  if (!/<meta name="robots" content="noindex"/i.test(html)) {
     fail(`${file} must remain noindex`);
   }
+  const nativeMain = `<main class="${notFoundRootClass}">`;
+  const legacyDiv = `<div class="${notFoundRootClass}">`;
+  if ((html.match(new RegExp(nativeMain, "g")) ?? []).length !== 1) {
+    fail(`${file} must render one native main landmark`);
+  }
+  if (html.includes(legacyDiv)) {
+    fail(`${file} still renders the 404 root as a div`);
+  }
+  if (!html.includes("</main><!--$--><!--/$--><script")) {
+    fail(`${file} is missing the matching 404 main closing tag`);
+  }
+}
+
+const notFoundArtifacts = collectNotFoundArtifacts();
+if (notFoundArtifacts.length !== 42) {
+  fail(`expected 42 generated 404 artifacts, found ${notFoundArtifacts.length}`);
+}
+
+const flightMainSignature =
+  `["$","main",null,{"className":"${notFoundRootClass}"`;
+const flightDivSignature =
+  `["$","div",null,{"className":"${notFoundRootClass}"`;
+let flightMainCount = 0;
+let flightDivCount = 0;
+
+for (const file of notFoundArtifacts) {
+  const normalized = read(file).replaceAll('\\"', '"');
+  flightMainCount += normalized.split(flightMainSignature).length - 1;
+  flightDivCount += normalized.split(flightDivSignature).length - 1;
+}
+
+if (flightMainCount !== 68) {
+  fail(`expected 68 synchronized Flight main landmarks, found ${flightMainCount}`);
+}
+if (flightDivCount !== 0) {
+  fail(`found ${flightDivCount} stale Flight 404 div roots`);
 }
 
 if (failures.length > 0) {
