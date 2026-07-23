@@ -11,10 +11,10 @@ const canonicalIconHref = "/favicon-a6b920f9.png";
 const canonicalIconFile = canonicalIconHref.slice(1);
 const canonicalIconHash =
   "a6b920f9931dc0558436d967f2d0446a2609fce4125923e0e646974323cace5b";
-const contactEmail = "info@tirtil.ai";
-const contactMailtoHref = "mailto:info%40tirtil.ai";
+const contactEmail = "hello@tirtil.ai";
+const contactMailtoHref = "mailto:hello%40tirtil.ai";
 const continuousEmailTextPattern =
-  /(?:^|>)\s*info(?:@|&#0*64;|&#x0*40;)tirtil\.ai\s*(?=<|$)/gi;
+  /(?:^|>)\s*hello(?:@|&#0*64;|&#x0*40;)tirtil\.ai\s*(?=<|$)/gi;
 const expectedHtmlFiles = 13;
 const expectedRenderedFooters = 7;
 const maxFailureExamples = 2;
@@ -323,17 +323,21 @@ for (const file of htmlFiles) {
     const mailtoAnchors = anchors.filter(
       ({ attributes }) => attributes.get("href") === contactMailtoHref,
     );
+    const displayEmailAnchors = mailtoAnchors.filter(
+      ({ source }) =>
+        (source.match(continuousEmailTextPattern) ?? []).length === 1,
+    );
     const continuousEmailNodes =
       footer.match(continuousEmailTextPattern) ?? [];
     const cloudflareExemption =
-      mailtoAnchors.length === 1
-        ? `<!--email_off-->${mailtoAnchors[0].source}<!--/email_off-->`
+      displayEmailAnchors.length === 1
+        ? `<!--email_off-->${displayEmailAnchors[0].source}<!--/email_off-->`
         : "";
 
-    if (mailtoAnchors.length !== 1) {
+    if (mailtoAnchors.length < 1) {
       fail(
         "FOOTER_MAILTO",
-        "Footer must contain exactly one native info@tirtil.ai mailto link",
+        "Footer contact links must use the native hello@tirtil.ai mailto target",
         {
           file,
           count: mailtoAnchors.length,
@@ -342,8 +346,7 @@ for (const file of htmlFiles) {
     }
     if (
       continuousEmailNodes.length !== 1 ||
-      mailtoAnchors.length !== 1 ||
-      !(mailtoAnchors[0].source.match(continuousEmailTextPattern) ?? []).length
+      displayEmailAnchors.length !== 1
     ) {
       fail(
         "FOOTER_EMAIL_TEXT_NODE",
@@ -420,13 +423,16 @@ if (manifestFiles.length > 0) {
 for (const file of contractTextFiles) {
   const source = read(file);
   const staleReferences = textReferences(source).filter((reference) => {
-    const pathname = reference.split(/[?#]/, 1)[0];
+    const sameOriginReference = reference.startsWith("//tirtil.ai/")
+      ? reference.slice("//tirtil.ai".length)
+      : reference;
+    const pathname = sameOriginReference.split(/[?#]/, 1)[0];
     if (pathname.endsWith(".webmanifest")) {
       return true;
     }
     return (
       isBrowserIconAsset(pathname.slice(1)) &&
-      reference !== canonicalIconHref
+      sameOriginReference !== canonicalIconHref
     );
   });
   if (staleReferences.length > 0) {

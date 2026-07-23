@@ -35,15 +35,17 @@ for (const file of textAssets.filter(
   const normalized = fs
     .readFileSync(file, "utf8")
     .replaceAll('\\"', '"');
-  for (const accidentalMailto of [
-    '"href":"mailto:info%40tirtil.ai","onClick":"$undefined"',
-    '"href":"mailto:info%40tirtil.ai","className":"font-bold text-leaf-deep hover:underline"',
-  ]) {
-    if (normalized.includes(accidentalMailto)) {
-      fail(
-        `${path.relative(root, file)} contains a footer mailto outside the footer`,
-      );
+  for (const staleContactTarget of ['"href":"/#iletisim"', '"href":"#iletisim"']) {
+    if (normalized.includes(staleContactTarget)) {
+      fail(`${path.relative(root, file)} still links to the contact section`);
     }
+  }
+  if (
+    normalized.includes("info@tirtil.ai") ||
+    normalized.includes("info%40tirtil.ai") ||
+    normalized.includes("info&#64;tirtil.ai")
+  ) {
+    fail(`${path.relative(root, file)} still exposes info@tirtil.ai`);
   }
   let cursor = 0;
   while (true) {
@@ -55,12 +57,12 @@ for (const file of textAssets.filter(
       markerIndex,
       markerIndex + 1_500,
     );
-    if (!before.includes('"href":"mailto:info%40tirtil.ai"')) {
+    if (!before.includes('"href":"mailto:hello%40tirtil.ai"')) {
       fail(`${path.relative(root, file)} RSC footer has the wrong email target`);
     }
     if (
       !after.includes(
-        '["$","span",null,{"children":"info@tirtil.ai"}]',
+        '["$","span",null,{"children":"hello@tirtil.ai"}]',
       )
     ) {
       fail(`${path.relative(root, file)} RSC footer splits the email address`);
@@ -90,15 +92,19 @@ for (const file of pagesWithNavbar) {
   }
   const footer = html.match(/<footer[\s\S]*?<\/footer>/)?.[0] ?? "";
   const emailLink =
-    footer.match(
-      /<a href="mailto:info%40tirtil\.ai"[^>]*>[\s\S]*?<\/a>/,
-    )?.[0] ?? "";
-  if (!emailLink.includes("info&#64;tirtil.ai")) {
+    [...footer.matchAll(/<a\b[^>]*>[\s\S]*?<\/a>/g)]
+      .map((match) => match[0])
+      .find(
+        (anchor) =>
+          anchor.includes('href="mailto:hello%40tirtil.ai"') &&
+          anchor.includes("hello&#64;tirtil.ai"),
+      ) ?? "";
+  if (!emailLink.includes("hello&#64;tirtil.ai")) {
     fail(
       `${path.relative(root, file)} footer is missing the continuous email address`,
     );
   }
-  if (/<span>info<\/span>|<span>@<\/span>|<span>tirtil\.ai<\/span>/.test(emailLink)) {
+  if (/<span>hello<\/span>|<span>@<\/span>|<span>tirtil\.ai<\/span>/.test(emailLink)) {
     fail(`${path.relative(root, file)} footer still splits the email address`);
   }
   const cloudflareExemption =
@@ -152,11 +158,11 @@ if (/<form\b|<input\b|<textarea\b/i.test(contactSection)) {
 if (!contactSection.includes("Detaylı bilgi ve iletişim")) {
   fail("Homepage contact section is missing the new information copy");
 }
-if (!contactSection.includes('href="/#iletisim"')) {
-  fail("Homepage contact email is missing its same-origin hydration-safe fallback");
+if (!contactSection.includes('href="mailto:hello%40tirtil.ai"')) {
+  fail("Homepage contact email is missing its direct mailto target");
 }
 for (const emailPart of [
-  '<span>info</span>',
+  '<span>hello</span>',
   '<span>@</span>',
   '<span>tirtil.ai</span>',
 ]) {
@@ -193,6 +199,12 @@ for (const staleClientToken of [
 }
 if (!contactModule.includes("mailto:")) {
   fail("Hydrated contact email does not open a mail client");
+}
+if (
+  !contactModule.includes('href:"mailto:hello%40tirtil.ai"') ||
+  !contactModule.includes('children:"hello"')
+) {
+  fail("Hydrated contact email does not expose hello@tirtil.ai directly");
 }
 
 let navbarReferenceCount = 0;
@@ -259,7 +271,7 @@ if (!homepage.includes("Tırtıl hakkında nasıl bilgi alabilirim?")) {
 }
 
 const contactAlias = read("iletisim/index.html");
-if (!contactAlias.includes("url=/#iletisim")) {
+if (!contactAlias.includes("url=mailto:hello%40tirtil.ai")) {
   fail("/iletisim/ no longer redirects to the homepage contact section");
 }
 
